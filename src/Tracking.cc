@@ -4511,7 +4511,8 @@ void Tracking::ClusterWithDBSCAN(std::map<int, std::vector<cv::Point3f>>& cluste
         if (clusterIds[i] != -2) continue; // Skip if already visited
 
         auto neighbors = regionQuery(i);
-        if (neighbors.size() < minPts)
+        const size_t minPtsSize = static_cast<size_t>(minPts);
+        if (neighbors.size() < minPtsSize)
         {
             clusterIds[i] = -1; // Mark as noise
         }
@@ -4526,7 +4527,7 @@ void Tracking::ClusterWithDBSCAN(std::map<int, std::vector<cv::Point3f>>& cluste
 
                 clusterIds[neighIdx] = clusterId;
                 auto newNeighbors = regionQuery(neighIdx);
-                if (newNeighbors.size() >= minPts) neighbors.insert(neighbors.end(), newNeighbors.begin(), newNeighbors.end());
+                if (newNeighbors.size() >= minPtsSize) neighbors.insert(neighbors.end(), newNeighbors.begin(), newNeighbors.end());
             }
         }
     }

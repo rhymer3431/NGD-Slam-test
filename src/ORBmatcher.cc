@@ -31,33 +31,6 @@ using namespace std;
 
 namespace ORB_SLAM3
 {
-    static bool prepareOpticalFlowImage(const cv::Mat &src, cv::Mat &dst)
-    {
-        if(src.empty())
-            return false;
-
-        if(src.channels() == 1)
-            dst = src;
-        else if(src.channels() == 3)
-            cv::cvtColor(src, dst, cv::COLOR_BGR2GRAY);
-        else if(src.channels() == 4)
-            cv::cvtColor(src, dst, cv::COLOR_BGRA2GRAY);
-        else
-            return false;
-
-        if(dst.depth() != CV_8U)
-        {
-            cv::Mat converted;
-            dst.convertTo(converted, CV_8U);
-            dst = converted;
-        }
-
-        if(!dst.isContinuous())
-            dst = dst.clone();
-
-        return true;
-    }
-
     const int ORBmatcher::TH_HIGH = 100;
     const int ORBmatcher::TH_LOW = 50;
     const int ORBmatcher::HISTO_LENGTH = 30;
@@ -2037,6 +2010,33 @@ namespace ORB_SLAM3
 
     int ORBmatcher::SearchByOpticalFlow(Frame &CurrentFrame, const Frame &LastFrame, const cv::Mat &CurrImg, const cv::Mat &LastImg, const cv::Mat &imMask)
     {   
+        auto prepareOpticalFlowImage = [](const cv::Mat &src, cv::Mat &dst) -> bool
+        {
+            if(src.empty())
+                return false;
+
+            if(src.channels() == 1)
+                dst = src;
+            else if(src.channels() == 3)
+                cv::cvtColor(src, dst, cv::COLOR_BGR2GRAY);
+            else if(src.channels() == 4)
+                cv::cvtColor(src, dst, cv::COLOR_BGRA2GRAY);
+            else
+                return false;
+
+            if(dst.depth() != CV_8U)
+            {
+                cv::Mat converted;
+                dst.convertTo(converted, CV_8U);
+                dst = converted;
+            }
+
+            if(!dst.isContinuous())
+                dst = dst.clone();
+
+            return true;
+        };
+
         std::vector<cv::Point2f> lastKeyPoints, currKeyPoints;
         std::vector<MapPoint*> lastMapPoints;
         std::vector<unsigned char> status;
