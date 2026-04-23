@@ -31,6 +31,32 @@ using namespace std;
 
 namespace ORB_SLAM3
 {
+    static bool prepareOpticalFlowImage(const cv::Mat &src, cv::Mat &dst)
+    {
+        if(src.empty())
+            return false;
+
+        if(src.channels() == 1)
+            dst = src;
+        else if(src.channels() == 3)
+            cv::cvtColor(src, dst, cv::COLOR_BGR2GRAY);
+        else if(src.channels() == 4)
+            cv::cvtColor(src, dst, cv::COLOR_BGRA2GRAY);
+        else
+            return false;
+
+        if(dst.depth() != CV_8U)
+        {
+            cv::Mat converted;
+            dst.convertTo(converted, CV_8U);
+            dst = converted;
+        }
+
+        if(!dst.isContinuous())
+            dst = dst.clone();
+
+        return true;
+    }
 
     const int ORBmatcher::TH_HIGH = 100;
     const int ORBmatcher::TH_LOW = 50;
@@ -2009,7 +2035,7 @@ namespace ORB_SLAM3
         return nmatches;
     }
 
-    int ORBmatcher::SearchByOpticalFlow(Frame &CurrentFrame, const Frame &LastFrame, const cv::Mat CurrImg, const cv::Mat LastImg, const cv::Mat imMask)
+    int ORBmatcher::SearchByOpticalFlow(Frame &CurrentFrame, const Frame &LastFrame, const cv::Mat &CurrImg, const cv::Mat &LastImg, const cv::Mat &imMask)
     {   
         std::vector<cv::Point2f> lastKeyPoints, currKeyPoints;
         std::vector<MapPoint*> lastMapPoints;
@@ -2030,19 +2056,32 @@ namespace ORB_SLAM3
             }
         }
 
-        if (LastImg.channels() > 1)
-            cv::cvtColor(LastImg, LastImg, cv::COLOR_BGR2GRAY);
+        CurrentFrame.N = 0;
+        if(lastKeyPoints.empty())
+            return 0;
 
-        if (CurrImg.channels() > 1)
-            cv::cvtColor(CurrImg, CurrImg, cv::COLOR_BGR2GRAY);
+        cv::Mat lastGray, currGray;
+        if(!prepareOpticalFlowImage(LastImg, lastGray) || !prepareOpticalFlowImage(CurrImg, currGray))
+            return 0;
 
         // Find matches using LK optical flow
-        cv::calcOpticalFlowPyrLK(LastImg, CurrImg, lastKeyPoints, currKeyPoints, status, error);
+        cv::Mat prevPts(1, static_cast<int>(lastKeyPoints.size()), CV_32FC2, lastKeyPoints.data());
+        cv::Mat nextPts;
+        cv::calcOpticalFlowPyrLK(lastGray, currGray, prevPts, nextPts, status, error);
+        if(nextPts.empty())
+            return 0;
+
+        currKeyPoints.assign(nextPts.ptr<cv::Point2f>(), nextPts.ptr<cv::Point2f>() + nextPts.total());
         
         // Remove points without match
-        for (size_t i = 0; i < currKeyPoints.size(); i++)
+        for (size_t i = 0; i < currKeyPoints.size() && i < status.size(); i++)
         {
-            if (status[i] && imMask.at<uchar>(currKeyPoints[i].y, currKeyPoints[i].x) == 0)
+            const int x = cvRound(currKeyPoints[i].x);
+            const int y = cvRound(currKeyPoints[i].y);
+            const bool valid_mask = imMask.empty() ||
+                                    (x >= 0 && x < imMask.cols && y >= 0 && y < imMask.rows &&
+                                     imMask.at<uchar>(y, x) == 0);
+            if(status[i] && x >= 0 && x < currGray.cols && y >= 0 && y < currGray.rows && valid_mask)
             {
                 cv::KeyPoint kp(currKeyPoints[i], 1.0f);
                 CurrentFrame.mvKeysUn.push_back(kp);

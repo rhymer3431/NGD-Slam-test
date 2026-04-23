@@ -1,0 +1,64 @@
+%YAML:1.0
+
+#--------------------------------------------------------------------------------------------
+# Intel RealSense D455 RGB-D settings
+#--------------------------------------------------------------------------------------------
+# The RealSense example updates Camera1.fx/fy/cx/cy, Camera.width/height and
+# RGBD.DepthMapFactor at runtime from the connected device. The values below are
+# safe defaults for configuration before a D455 is connected.
+
+File.version: "1.0"
+
+Camera.type: "PinHole"
+
+# Color camera calibration. Runtime values from librealsense override these.
+Camera1.fx: 617.201
+Camera1.fy: 617.362
+Camera1.cx: 324.637
+Camera1.cy: 242.462
+
+# RealSense color/depth streams are aligned before tracking.
+Camera1.k1: 0.0
+Camera1.k2: 0.0
+Camera1.p1: 0.0
+Camera1.p2: 0.0
+
+# Camera resolution requested by the example.
+Camera.width: 640
+Camera.height: 480
+
+# Camera frames per second
+Camera.fps: 30
+
+# Color order of the images (0: BGR, 1: RGB)
+Camera.RGB: 1
+
+# Close/Far threshold. D455 stereo baseline is approximately 95 mm.
+Stereo.ThDepth: 40.0
+Stereo.b: 0.095
+
+# Depth map values factor. Runtime value is 1 / depth_scale from librealsense.
+RGBD.DepthMapFactor: 1000.0
+
+#--------------------------------------------------------------------------------------------
+# ORB Parameters
+#--------------------------------------------------------------------------------------------
+ORBextractor.nFeatures: 1250
+ORBextractor.scaleFactor: 1.2
+ORBextractor.nLevels: 8
+ORBextractor.iniThFAST: 20
+ORBextractor.minThFAST: 7
+
+#--------------------------------------------------------------------------------------------
+# Viewer Parameters
+#--------------------------------------------------------------------------------------------
+Viewer.KeyFrameSize: 0.05
+Viewer.KeyFrameLineWidth: 1.0
+Viewer.GraphLineWidth: 0.9
+Viewer.PointSize: 2.0
+Viewer.CameraSize: 0.08
+Viewer.CameraLineWidth: 3.0
+Viewer.ViewpointX: 0.0
+Viewer.ViewpointY: -0.7
+Viewer.ViewpointZ: -3.5
+Viewer.ViewpointF: 500.0

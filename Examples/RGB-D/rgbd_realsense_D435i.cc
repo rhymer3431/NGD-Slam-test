@@ -24,8 +24,8 @@
 #include <chrono>
 #include <ctime>
 #include <sstream>
-
-#include <condition_variable>
+#include <iomanip>
+#include <unistd.h>
 
 #include <opencv2/core/core.hpp>
 
@@ -47,14 +47,11 @@ void exit_loop_handler(int s){
 
 rs2_stream find_stream_to_align(const std::vector<rs2::stream_profile>& streams);
 bool profile_changed(const std::vector<rs2::stream_profile>& current, const std::vector<rs2::stream_profile>& prev);
-
-void interpolateData(const std::vector<double> &vBase_times,
-                     std::vector<rs2_vector> &vInterp_data, std::vector<double> &vInterp_times,
-                     const rs2_vector &prev_data, const double &prev_time);
-
-rs2_vector interpolateMeasure(const double target_time,
-                              const rs2_vector current_data, const double current_time,
-                              const rs2_vector prev_data, const double prev_time);
+std::string buildRuntimeSettingsFile(const std::string &settings_file,
+                                     const rs2_intrinsics &intrinsics,
+                                     const float depth_scale);
+float get_depth_scale(const rs2::device &device);
+void set_sensor_option_if_supported(rs2::sensor &sensor, rs2_option option, float value);
 
 static rs2_option get_sensor_option(const rs2::sensor& sensor)
 {
@@ -102,17 +99,15 @@ int main(int argc, char **argv) {
 
     if (argc < 3 || argc > 4) {
         cerr << endl
-             << "Usage: ./mono_inertial_realsense_D435i path_to_vocabulary path_to_settings (trajectory_file_name)"
+             << "Usage: " << argv[0] << " path_to_vocabulary path_to_settings (trajectory_file_name)"
              << endl;
         return 1;
     }
 
     string file_name;
-    bool bFileName = false;
 
     if (argc == 4) {
         file_name = string(argv[argc - 1]);
-        bFileName = true;
     }
 
     struct sigaction sigIntHandler;
@@ -124,8 +119,6 @@ int main(int argc, char **argv) {
     sigaction(SIGINT, &sigIntHandler, NULL);
     b_continue_session = true;
 
-    double offset = 0; // ms
-
     rs2::context ctx;
     rs2::device_list devices = ctx.query_devices();
     rs2::device selected_device;
@@ -135,7 +128,26 @@ int main(int argc, char **argv) {
         return 0;
     }
     else
+    {
         selected_device = devices[0];
+        for (rs2::device device : devices)
+        {
+            const string device_name = device.supports(RS2_CAMERA_INFO_NAME) ?
+                                       device.get_info(RS2_CAMERA_INFO_NAME) : "";
+            if(device_name.find("D455") != string::npos)
+            {
+                selected_device = device;
+                break;
+            }
+        }
+
+        const string selected_name = selected_device.supports(RS2_CAMERA_INFO_NAME) ?
+                                     selected_device.get_info(RS2_CAMERA_INFO_NAME) : "Unknown RealSense";
+        const string selected_serial = selected_device.supports(RS2_CAMERA_INFO_SERIAL_NUMBER) ?
+                                       selected_device.get_info(RS2_CAMERA_INFO_SERIAL_NUMBER) : "unknown";
+        std::cout << "Selected RealSense device: " << selected_name
+                  << " (serial: " << selected_serial << ")" << std::endl;
+    }
 
     std::vector<rs2::sensor> sensors = selected_device.query_sensors();
     int index = 0;
@@ -144,20 +156,16 @@ int main(int argc, char **argv) {
         if (sensor.supports(RS2_CAMERA_INFO_NAME)) {
             ++index;
             if (index == 1) {
-                sensor.set_option(RS2_OPTION_ENABLE_AUTO_EXPOSURE, 1);
-                sensor.set_option(RS2_OPTION_AUTO_EXPOSURE_LIMIT,50000);
-                sensor.set_option(RS2_OPTION_EMITTER_ENABLED, 1); // emitter on for depth information
+                set_sensor_option_if_supported(sensor, RS2_OPTION_ENABLE_AUTO_EXPOSURE, 1);
+                set_sensor_option_if_supported(sensor, RS2_OPTION_AUTO_EXPOSURE_LIMIT, 50000);
+                set_sensor_option_if_supported(sensor, RS2_OPTION_EMITTER_ENABLED, 1); // emitter on for depth information
             }
             // std::cout << "  " << index << " : " << sensor.get_info(RS2_CAMERA_INFO_NAME) << std::endl;
             get_sensor_option(sensor);
             if (index == 2){
                 // RGB camera
-                sensor.set_option(RS2_OPTION_EXPOSURE,80.f);
+                set_sensor_option_if_supported(sensor, RS2_OPTION_EXPOSURE, 80.f);
 
-            }
-
-            if (index == 3){
-                sensor.set_option(RS2_OPTION_ENABLE_MOTION_CORRECTION,0);
             }
 
         }
@@ -175,31 +183,7 @@ int main(int argc, char **argv) {
     // cfg.enable_stream(RS2_STREAM_INFRARED, 1, 640, 480, RS2_FORMAT_Y8, 30);
     cfg.enable_stream(RS2_STREAM_DEPTH,640, 480, RS2_FORMAT_Z16, 30);
 
-    // IMU stream
-    cfg.enable_stream(RS2_STREAM_ACCEL, RS2_FORMAT_MOTION_XYZ32F); //, 250); // 63
-    cfg.enable_stream(RS2_STREAM_GYRO, RS2_FORMAT_MOTION_XYZ32F); //, 400);
-
-    // IMU callback
-    std::mutex imu_mutex;
-    std::condition_variable cond_image_rec;
-
-    vector<double> v_accel_timestamp;
-    vector<rs2_vector> v_accel_data;
-    vector<double> v_gyro_timestamp;
-    vector<rs2_vector> v_gyro_data;
-
-    double prev_accel_timestamp = 0;
-    rs2_vector prev_accel_data;
-    double current_accel_timestamp = 0;
-    rs2_vector current_accel_data;
-    vector<double> v_accel_timestamp_sync;
-    vector<rs2_vector> v_accel_data_sync;
-
-    cv::Mat imCV, depthCV;
     int width_img, height_img;
-    double timestamp_image = -1.0;
-    bool image_ready = false;
-    int count_im_buffer = 0; // count dropped frames
 
     // start and stop just to get necessary profile
     rs2::pipeline_profile pipe_profile = pipe.start(cfg);
@@ -214,77 +198,7 @@ int main(int argc, char **argv) {
     // rs2::align allows us to perform alignment of depth frames to others frames
     //The "align_to" is the stream type to which we plan to align depth frames.
     rs2::align align(align_to);
-    rs2::frameset fsSLAM;
-
-    auto imu_callback = [&](const rs2::frame& frame)
-    {
-        std::unique_lock<std::mutex> lock(imu_mutex);
-
-        if(rs2::frameset fs = frame.as<rs2::frameset>())
-        {
-            count_im_buffer++;
-
-            double new_timestamp_image = fs.get_timestamp()*1e-3;
-            if(abs(timestamp_image-new_timestamp_image)<0.001){
-                count_im_buffer--;
-                return;
-            }
-
-            if (profile_changed(pipe.get_active_profile().get_streams(), pipe_profile.get_streams()))
-            {
-                //If the profile was changed, update the align object, and also get the new device's depth scale
-                pipe_profile = pipe.get_active_profile();
-                align_to = find_stream_to_align(pipe_profile.get_streams());
-                align = rs2::align(align_to);
-            }
-
-            //Align depth and rgb takes long time, move it out of the interruption to avoid losing IMU measurements
-            fsSLAM = fs;
-
-            /*
-            //Get processed aligned frame
-            auto processed = align.process(fs);
-
-
-            // Trying to get both other and aligned depth frames
-            rs2::video_frame color_frame = processed.first(align_to);
-            rs2::depth_frame depth_frame = processed.get_depth_frame();
-            //If one of them is unavailable, continue iteration
-            if (!depth_frame || !color_frame) {
-                cout << "Not synchronized depth and image\n";
-                return;
-            }
-
-
-            imCV = cv::Mat(cv::Size(width_img, height_img), CV_8UC3, (void*)(color_frame.get_data()), cv::Mat::AUTO_STEP);
-            depthCV = cv::Mat(cv::Size(width_img, height_img), CV_16U, (void*)(depth_frame.get_data()), cv::Mat::AUTO_STEP);
-
-            cv::Mat depthCV_8U;
-            depthCV.convertTo(depthCV_8U,CV_8U,0.01);
-            cv::imshow("depth image", depthCV_8U);*/
-
-            timestamp_image = fs.get_timestamp()*1e-3;
-            image_ready = true;
-
-            while(v_gyro_timestamp.size() > v_accel_timestamp_sync.size())
-            {
-                int index = v_accel_timestamp_sync.size();
-                double target_time = v_gyro_timestamp[index];
-
-                v_accel_data_sync.push_back(current_accel_data);
-                v_accel_timestamp_sync.push_back(target_time);
-            }
-
-            lock.unlock();
-            cond_image_rec.notify_all();
-        }
-    };
-
-
-
-    pipe_profile = pipe.start(cfg, imu_callback);
-
-
+    pipe_profile = pipe.start(cfg);
 
     rs2::stream_profile cam_stream = pipe_profile.get_stream(RS2_STREAM_COLOR);
 
@@ -304,42 +218,36 @@ int main(int argc, char **argv) {
     intrinsics_cam.coeffs[2] << ", " << intrinsics_cam.coeffs[3] << ", " << intrinsics_cam.coeffs[4] << ", " << std::endl;
     std::cout << " Model = " << intrinsics_cam.model << std::endl;
 
+    const float depth_scale = get_depth_scale(pipe_profile.get_device());
+    std::cout << " depth scale = " << depth_scale << std::endl;
+    const string settings_file = buildRuntimeSettingsFile(argv[2], intrinsics_cam, depth_scale);
+    std::cout << " Using settings file = " << settings_file << std::endl;
+
 
     // Create SLAM system. It initializes all system threads and gets ready to process frames.
-    ORB_SLAM3::System SLAM(argv[1],argv[2],ORB_SLAM3::System::RGBD, true, 0, file_name);
+    ORB_SLAM3::System SLAM(argv[1],settings_file,ORB_SLAM3::System::RGBD, true, 0, file_name);
     float imageScale = SLAM.GetImageScale();
 
     double timestamp;
     cv::Mat im, depth;
 
+#ifdef REGISTER_TIMES
     double t_resize = 0.f;
     double t_track = 0.f;
+#endif
     rs2::frameset fs;
 
-    while (!SLAM.isShutDown())
+    while (!SLAM.isShutDown() && b_continue_session)
     {
+        fs = pipe.wait_for_frames();
+        timestamp = fs.get_timestamp()*1e-3;
+
+        if (profile_changed(pipe.get_active_profile().get_streams(), pipe_profile.get_streams()))
         {
-            std::unique_lock<std::mutex> lk(imu_mutex);
-            if(!image_ready)
-                cond_image_rec.wait(lk);
-
-#ifdef COMPILEDWITHC11
-            std::chrono::steady_clock::time_point time_Start_Process = std::chrono::steady_clock::now();
-#else
-            std::chrono::monotonic_clock::time_point time_Start_Process = std::chrono::monotonic_clock::now();
-#endif
-
-            fs = fsSLAM;
-
-            if(count_im_buffer>1)
-                cout << count_im_buffer -1 << " dropped frs\n";
-            count_im_buffer = 0;
-
-            timestamp = timestamp_image;
-            im = imCV.clone();
-            depth = depthCV.clone();
-
-            image_ready = false;
+            // If the profile was changed, update the align object.
+            pipe_profile = pipe.get_active_profile();
+            align_to = find_stream_to_align(pipe_profile.get_streams());
+            align = rs2::align(align_to);
         }
 
         // Perform alignment here
@@ -348,6 +256,11 @@ int main(int argc, char **argv) {
         // Trying to get both other and aligned depth frames
         rs2::video_frame color_frame = processed.first(align_to);
         rs2::depth_frame depth_frame = processed.get_depth_frame();
+        if (!depth_frame || !color_frame)
+        {
+            cout << "Not synchronized depth and image\n";
+            continue;
+        }
 
         im = cv::Mat(cv::Size(width_img, height_img), CV_8UC3, (void*)(color_frame.get_data()), cv::Mat::AUTO_STEP);
         depth = cv::Mat(cv::Size(width_img, height_img), CV_16U, (void*)(depth_frame.get_data()), cv::Mat::AUTO_STEP);
@@ -389,7 +302,7 @@ int main(int argc, char **argv) {
     #endif
 #endif
         // Pass the image to the SLAM system
-        SLAM.TrackRGBD(im, depth, timestamp); //, vImuMeas); depthCV
+        SLAM.TrackRGBD(im, depth, timestamp);
 
 #ifdef REGISTER_TIMES
     #ifdef COMPILEDWITHC11
@@ -453,4 +366,82 @@ bool profile_changed(const std::vector<rs2::stream_profile>& current, const std:
         }
     }
     return false;
+}
+
+float get_depth_scale(const rs2::device &device)
+{
+    for (rs2::sensor sensor : device.query_sensors())
+    {
+        if (rs2::depth_sensor depth_sensor = sensor.as<rs2::depth_sensor>())
+            return depth_sensor.get_depth_scale();
+    }
+
+    return 0.001f;
+}
+
+void set_sensor_option_if_supported(rs2::sensor &sensor, rs2_option option, float value)
+{
+    try
+    {
+        if(sensor.supports(option))
+            sensor.set_option(option, value);
+    }
+    catch(const rs2::error &e)
+    {
+        std::cerr << "Could not set " << option << ": " << e.what() << std::endl;
+    }
+}
+
+static bool starts_with_key(const std::string &line, const std::string &key)
+{
+    return line.compare(0, key.size(), key) == 0;
+}
+
+static void write_setting_line(std::ostream &out, const std::string &key, const double value)
+{
+    out << key << " " << std::fixed << std::setprecision(9) << value << std::endl;
+}
+
+std::string buildRuntimeSettingsFile(const std::string &settings_file,
+                                     const rs2_intrinsics &intrinsics,
+                                     const float depth_scale)
+{
+    std::ifstream input(settings_file);
+    if(!input.is_open())
+    {
+        std::cerr << "Could not open settings file for runtime calibration: " << settings_file << std::endl;
+        return settings_file;
+    }
+
+    const std::string runtime_file = "/tmp/ngd_slam_realsense_" + std::to_string(getpid()) + ".yaml";
+    std::ofstream output(runtime_file);
+    if(!output.is_open())
+    {
+        std::cerr << "Could not create runtime settings file: " << runtime_file << std::endl;
+        return settings_file;
+    }
+
+    const double depth_factor = depth_scale > 0.f ? 1.0 / static_cast<double>(depth_scale) : 1000.0;
+    std::string line;
+    while(std::getline(input, line))
+    {
+        if(starts_with_key(line, "Camera1.fx:"))
+            write_setting_line(output, "Camera1.fx:", intrinsics.fx);
+        else if(starts_with_key(line, "Camera1.fy:"))
+            write_setting_line(output, "Camera1.fy:", intrinsics.fy);
+        else if(starts_with_key(line, "Camera1.cx:"))
+            write_setting_line(output, "Camera1.cx:", intrinsics.ppx);
+        else if(starts_with_key(line, "Camera1.cy:"))
+            write_setting_line(output, "Camera1.cy:", intrinsics.ppy);
+        else if(starts_with_key(line, "Camera.width:"))
+            output << "Camera.width: " << intrinsics.width << std::endl;
+        else if(starts_with_key(line, "Camera.height:"))
+            output << "Camera.height: " << intrinsics.height << std::endl;
+        else if(starts_with_key(line, "RGBD.DepthMapFactor:"))
+            write_setting_line(output, "RGBD.DepthMapFactor:", depth_factor);
+        else
+            output << line << std::endl;
+    }
+
+    return runtime_file;
 }

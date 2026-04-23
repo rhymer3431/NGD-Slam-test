@@ -39,6 +39,32 @@ using namespace std;
 
 namespace ORB_SLAM3
 {
+static bool prepareOpticalFlowImage(const cv::Mat &src, cv::Mat &dst)
+{
+    if(src.empty())
+        return false;
+
+    if(src.channels() == 1)
+        dst = src;
+    else if(src.channels() == 3)
+        cv::cvtColor(src, dst, cv::COLOR_BGR2GRAY);
+    else if(src.channels() == 4)
+        cv::cvtColor(src, dst, cv::COLOR_BGRA2GRAY);
+    else
+        return false;
+
+    if(dst.depth() != CV_8U)
+    {
+        cv::Mat converted;
+        dst.convertTo(converted, CV_8U);
+        dst = converted;
+    }
+
+    if(!dst.isContinuous())
+        dst = dst.clone();
+
+    return true;
+}
 
 
 Tracking::Tracking(System *pSys, ORBVocabulary* pVoc, FrameDrawer *pFrameDrawer, MapDrawer *pMapDrawer, Atlas *pAtlas, KeyFrameDatabase* pKFDB, const string &strSettingPath, const int sensor, Settings* settings, const string &_nameSeq):
@@ -1337,7 +1363,10 @@ bool Tracking::ParseIMUParamFile(cv::FileStorage &fSettings)
 
 
 
-    float Ng, Na, Ngw, Naw;
+    float Ng = 0.0f;
+    float Na = 0.0f;
+    float Ngw = 0.0f;
+    float Naw = 0.0f;
 
     node = fSettings["IMU.Frequency"];
     if(!node.empty() && node.isInt())
@@ -1581,7 +1610,7 @@ Sophus::SE3f Tracking::GrabImageRGBD(const cv::Mat &imRGB, const cv::Mat &imD, c
             Eigen::Quaternionf q = mLastFrameLK.GetPose().unit_quaternion();
             float roll = std::atan2(2.0 * (q.w() * q.z() + q.x() * q.y()), 1.0 - 2.0 * (q.z() * q.z() + q.x() * q.x()));
             float rollDeg = roll * 180.0 / CV_PI;
-            bool isLargeRotation = std::abs(rollDeg > 10);
+            bool isLargeRotation = std::abs(rollDeg) > 10;
 
             int maskSizeYOLO = cv::countNonZero(outputYOLO[1]);
             int maskSizeLast = cv::countNonZero(mImMaskLastKey);
@@ -1643,7 +1672,7 @@ Sophus::SE3f Tracking::GrabImageRGBD(const cv::Mat &imRGB, const cv::Mat &imD, c
     mImMaskLastKey = mImMask.clone();
 
     // Record last frame (used by TrackWithOpticalFlow)
-    mImGrayLastLK = mImGray;
+    mImGrayLastLK = mImGray.clone();
     mLastFrameLK = Frame(mCurrentFrame);
     mFrameNum++;
 
@@ -2017,7 +2046,7 @@ void Tracking::Track()
     else
     {
         // System is initialized. Track Frame.
-        bool bOK;
+        bool bOK = false;
 
 #ifdef REGISTER_TIMES
         std::chrono::steady_clock::time_point time_StartPosePred = std::chrono::steady_clock::now();
@@ -4301,17 +4330,32 @@ void Tracking::PredictCurrentMask()
                                                        cv::Point(erosionSize, erosionSize));
     erode(mImMaskLastKey, mImMaskLastKey, erosionElement);
 
-    ExtractDynaPoints(lastDynaPoints, mImGrayLastKey, mImMaskLastKey, 15);
+    cv::Mat lastGray, currGray;
+    if(!prepareOpticalFlowImage(mImGrayLastKey, lastGray) || !prepareOpticalFlowImage(mImGray, currGray))
+        return;
+
+    ExtractDynaPoints(lastDynaPoints, lastGray, mImMaskLastKey, 15);
 
     if(!lastDynaPoints.empty())
     {
-        cv::calcOpticalFlowPyrLK(mImGrayLastKey, mImGray, lastDynaPoints, currDynaPoints, status, error);
+        cv::Mat prevPts(1, static_cast<int>(lastDynaPoints.size()), CV_32FC2, lastDynaPoints.data());
+        cv::Mat nextPts;
+        cv::calcOpticalFlowPyrLK(lastGray, currGray, prevPts, nextPts, status, error);
+        if(nextPts.empty())
+            return;
+
+        currDynaPoints.assign(nextPts.ptr<cv::Point2f>(), nextPts.ptr<cv::Point2f>() + nextPts.total());
 
         for(size_t j = 0; j < status.size(); ++j)
         {
             if(status[j]) 
             {
-                float depth = mImDepth2.at<float>(currDynaPoints[j].y, currDynaPoints[j].x);
+                const int x = cvRound(currDynaPoints[j].x);
+                const int y = cvRound(currDynaPoints[j].y);
+                if(x < 0 || x >= mImDepth2.cols || y < 0 || y >= mImDepth2.rows)
+                    continue;
+
+                float depth = mImDepth2.at<float>(y, x);
                 if (depth >= 0.05) trackedDynaPoints.push_back(cv::Point3f(currDynaPoints[j].x, currDynaPoints[j].y, depth));
             }
         }
