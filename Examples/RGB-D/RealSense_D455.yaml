@@ -33,6 +33,10 @@ Camera.fps: 30
 # Color order of the images (0: BGR, 1: RGB)
 Camera.RGB: 1
 
+# Disable NGD dynamic mask/optical-flow path for live D455 tracking.
+# The original dynamic path can over-mask early frames and repeatedly reset maps.
+Tracking.UseDynamicMask: 0
+
 # Close/Far threshold. D455 stereo baseline is approximately 95 mm.
 Stereo.ThDepth: 40.0
 Stereo.b: 0.095
@@ -43,11 +47,11 @@ RGBD.DepthMapFactor: 1000.0
 #--------------------------------------------------------------------------------------------
 # ORB Parameters
 #--------------------------------------------------------------------------------------------
-ORBextractor.nFeatures: 1250
+ORBextractor.nFeatures: 2000
 ORBextractor.scaleFactor: 1.2
 ORBextractor.nLevels: 8
-ORBextractor.iniThFAST: 20
-ORBextractor.minThFAST: 7
+ORBextractor.iniThFAST: 12
+ORBextractor.minThFAST: 5
 
 #--------------------------------------------------------------------------------------------
 # Viewer Parameters

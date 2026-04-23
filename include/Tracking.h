@@ -183,6 +183,7 @@ public:
     list<Sophus::SE3f> mlRelativeFramePosesLK;
 
     // --------- For Dynamic ---------
+    bool mbUseDynamicMask = true;
     cv::Mat mImGray;
     cv::Mat mImRGB;
     cv::Mat mImMask;

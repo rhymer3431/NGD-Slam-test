@@ -120,6 +120,15 @@ Tracking::Tracking(System *pSys, ORBVocabulary* pVoc, FrameDrawer *pFrameDrawer,
         }
     }
 
+    cv::FileStorage fTrackingSettings(strSettingPath, cv::FileStorage::READ);
+    if(fTrackingSettings.isOpened())
+    {
+        cv::FileNode node = fTrackingSettings["Tracking.UseDynamicMask"];
+        if(!node.empty() && node.isInt())
+            mbUseDynamicMask = static_cast<int>(node) != 0;
+    }
+    std::cout << "- Dynamic mask tracking: " << (mbUseDynamicMask ? "enabled" : "disabled") << std::endl;
+
     initID = 0; lastID = 0;
     mbInitWith3KFs = false;
     mnNumDataset = 0;
@@ -1586,6 +1595,35 @@ Sophus::SE3f Tracking::GrabImageRGBD(const cv::Mat &imRGB, const cv::Mat &imD, c
 #endif
 
     auto track_start = std::chrono::high_resolution_clock::now(); //****************************************
+
+    if(!mbUseDynamicMask)
+    {
+        if(mSensor == System::RGBD)
+            mCurrentFrame = Frame(mImGray,mImDepth,timestamp,mpORBextractorLeft,mpORBVocabulary,mK,mDistCoef,mbf,mThDepth,mpCamera,true);
+        else if(mSensor == System::IMU_RGBD)
+            mCurrentFrame = Frame(mImGray,mImDepth,timestamp,mpORBextractorLeft,mpORBVocabulary,mK,mDistCoef,mbf,mThDepth,mpCamera,true,&mLastFrame,*mpImuCalib);
+
+        Track();
+
+        if(mCurrentFrame.isSet() && mLastFrameLK.isSet())
+            mVelocityLK = mCurrentFrame.GetPose() * mLastFrameLK.GetPose().inverse();
+
+        if(mCurrentFrame.isSet())
+        {
+            mImGrayLastLK = mImGray.clone();
+            mLastFrameLK = Frame(mCurrentFrame);
+        }
+
+        mFrameNum++;
+
+        auto track_end = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double, std::milli> track_duration = track_end - track_start;
+        mTotalTrackTime += track_duration.count();
+        std::cout << "Average processing time of GrabImageRGBD(): " << mTotalTrackTime / (double)(mFrameNum-1) << "ms" << std::endl;
+        std::cout << "Frame " << mCurrentFrame.mnId << " end" << std::endl;
+
+        return mCurrentFrame.GetPose();
+    }
 
     const bool canUseOpticalFlow = mFrameNum > 3 && mState == OK && mLastFrameLK.isSet();
     mbStartOpticalFlow = canUseOpticalFlow;
