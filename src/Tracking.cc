@@ -1587,11 +1587,8 @@ Sophus::SE3f Tracking::GrabImageRGBD(const cv::Mat &imRGB, const cv::Mat &imD, c
 
     auto track_start = std::chrono::high_resolution_clock::now(); //****************************************
 
-    bool RGBDInitialized = false;
-    if(mFrameNum > 3) RGBDInitialized = true;
-
-    if(RGBDInitialized) mbStartOpticalFlow = true;
-    else mbStartOpticalFlow = false;
+    const bool canUseOpticalFlow = mFrameNum > 3 && mState == OK && mLastFrameLK.isSet();
+    mbStartOpticalFlow = canUseOpticalFlow;
 
     mpYOLO->InsertInput(mImRGB, mImDepth2);
 
@@ -1625,23 +1622,29 @@ Sophus::SE3f Tracking::GrabImageRGBD(const cv::Mat &imRGB, const cv::Mat &imD, c
     if(mFrameNum > 1) PredictCurrentMask();
 
     // Static Tracking
+    bool bOpticalFlowOK = false;
     if(mbStartOpticalFlow)
     {
         // Define new frame without ORB features
         mCurrentFrame = Frame(mbStartOpticalFlow);
         mCurrentFrame.mTimeStamp = timestamp;
 
-        TrackWithOpticalFlow();
+        bOpticalFlowOK = TrackWithOpticalFlow();
+        if(!bOpticalFlowOK)
+        {
+            mbStartOpticalFlow = false;
+            mnMatchesInliers = 0;
+        }
     }
 
-    if(!RGBDInitialized) mbNeedKF = true;
-    else if(RGBDInitialized) mbNeedKF = NeedNewKeyFrame();
+    if(!bOpticalFlowOK) mbNeedKF = true;
+    else mbNeedKF = NeedNewKeyFrame();
 
     // Keyframe Tracking
     if(mbNeedKF)
     {
         Sophus::SE3f Tcw;
-        if(mbStartOpticalFlow) Tcw = mCurrentFrame.GetPose();
+        if(bOpticalFlowOK) Tcw = mCurrentFrame.GetPose();
 
         if(cv::countNonZero(mImMask)!=0 || cv::countNonZero(mImMaskLastKey)!=0) mpORBextractorTmp = mpORBextractorDyna;
         else mpORBextractorTmp = mpORBextractorLeft;
@@ -1652,7 +1655,7 @@ Sophus::SE3f Tracking::GrabImageRGBD(const cv::Mat &imRGB, const cv::Mat &imD, c
         else if(mSensor == System::IMU_RGBD)
             mCurrentFrame = Frame(mImGray,mImDepth,mImMask,timestamp,mpORBextractorTmp,mpORBVocabulary,mK,mDistCoef,mbf,mThDepth,mpCamera,!mbStartOpticalFlow,&mLastFrame,*mpImuCalib);
 
-        if(mbStartOpticalFlow) mCurrentFrame.SetPose(Tcw);
+        if(bOpticalFlowOK) mCurrentFrame.SetPose(Tcw);
         
         Track();
     }
@@ -1667,13 +1670,17 @@ Sophus::SE3f Tracking::GrabImageRGBD(const cv::Mat &imRGB, const cv::Mat &imD, c
         mlbLost.push_back(mState==LOST);
     }
 
-    mVelocityLK = mCurrentFrame.GetPose() * mLastFrameLK.GetPose().inverse();
+    if(mCurrentFrame.isSet() && mLastFrameLK.isSet())
+        mVelocityLK = mCurrentFrame.GetPose() * mLastFrameLK.GetPose().inverse();
     mImGrayLastKey = mImGray.clone();
     mImMaskLastKey = mImMask.clone();
 
     // Record last frame (used by TrackWithOpticalFlow)
-    mImGrayLastLK = mImGray.clone();
-    mLastFrameLK = Frame(mCurrentFrame);
+    if(mCurrentFrame.isSet())
+    {
+        mImGrayLastLK = mImGray.clone();
+        mLastFrameLK = Frame(mCurrentFrame);
+    }
     mFrameNum++;
 
     auto track_end = std::chrono::high_resolution_clock::now(); //******************************************
