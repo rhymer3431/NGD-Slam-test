@@ -76,7 +76,23 @@ chmod +x build.sh
 ./Examples/RGB-D/rgbd_tum ./Vocabulary/ORBvoc.txt ./Examples/RGB-D/TUM3.yaml ./path/to/TUM/rgbd_dataset_freiburg3_walking_xyz ./Examples/RGB-D/associations/fr3_walk_xyz.txt
 ```
 
-# 4. Citation
+# 4. ROS 2 RGB-D Node
+A ROS 2 Humble package is available at `Examples/ROS2/ngd_slam_ros`. Build the core library first, then build the ROS package in a colcon workspace:
+```
+./build.sh
+source /opt/ros/humble/setup.bash
+colcon build --packages-select ngd_slam_ros --cmake-args -DCMAKE_BUILD_TYPE=Release
+source install/setup.bash
+```
+
+Run it with:
+```
+ros2 launch ngd_slam_ros rgbd.launch.py \
+  voc_file:=/absolute/path/to/NGD-SLAM/Vocabulary/ORBvoc.txt \
+  settings_file:=/absolute/path/to/NGD-SLAM/Examples/RGB-D/RealSense_D455.yaml
+```
+
+# 5. Citation
 If you find this work to be useful in your research, please consider citing:
 ```bibtex
 @inproceedings{zhang2025ngdslam,

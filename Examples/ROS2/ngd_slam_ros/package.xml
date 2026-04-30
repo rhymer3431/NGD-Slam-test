@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>ngd_slam_ros</name>
+  <version>0.1.0</version>
+  <description>ROS 2 RGB-D node for NGD-SLAM.</description>
+
+  <maintainer email="mangoo3431@gmail.com">mangoo</maintainer>
+  <license>GPL-3.0-or-later</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>cv_bridge</depend>
+  <depend>geometry_msgs</depend>
+  <depend>message_filters</depend>
+  <depend>rclcpp</depend>
+  <depend>rclpy</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_msgs</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
