@@ -1,0 +1,81 @@
+%YAML:1.0
+
+#--------------------------------------------------------------------------------------------
+# D455 template for live RGB-D + IMU input.
+# Replace Camera1.*, Stereo.b, IMU.T_b_c1 and IMU noise terms with values from your own D455.
+# The defaults below mirror the current D435i example and are intended only as a starting point.
+#--------------------------------------------------------------------------------------------
+File.version: "1.0"
+
+Camera.type: "PinHole"
+
+# Color camera calibration parameters (OpenCV)
+Camera1.fx: 617.201
+Camera1.fy: 617.362
+Camera1.cx: 324.637
+Camera1.cy: 242.462
+
+# Distortion parameters
+Camera1.k1: 0.0
+Camera1.k2: 0.0
+Camera1.p1: 0.0
+Camera1.p2: 0.0
+
+# Camera resolution
+Camera.width: 640
+Camera.height: 480
+
+# Camera frames per second
+Camera.fps: 30
+
+# Color order of the images (0: BGR, 1: RGB. It is ignored if images are grayscale)
+Camera.RGB: 1
+
+Stereo.ThDepth: 40.0
+Stereo.b: 0.0745
+
+# Depth map values factor
+RGBD.DepthMapFactor: 1000.0
+
+# Transformation from body-frame (imu) to color camera
+IMU.T_b_c1: !!opencv-matrix
+   rows: 4
+   cols: 4
+   dt: f
+   data: [0.999903, -0.0138036, -0.00208099, -0.0202141,
+         0.0137985, 0.999902, -0.00243498, 0.00505961,
+         0.0021144, 0.00240603, 0.999995, 0.0114047,
+         0.0, 0.0, 0.0, 1.0]
+
+# Do not insert KFs when recently lost
+IMU.InsertKFsWhenLost: 0
+
+# IMU noise
+IMU.NoiseGyro: 1e-2
+IMU.NoiseAcc: 1e-1
+IMU.GyroWalk: 1e-6
+IMU.AccWalk: 1e-4
+IMU.Frequency: 200.0
+
+#--------------------------------------------------------------------------------------------
+# ORB Parameters
+#--------------------------------------------------------------------------------------------
+ORBextractor.nFeatures: 1250
+ORBextractor.scaleFactor: 1.2
+ORBextractor.nLevels: 8
+ORBextractor.iniThFAST: 20
+ORBextractor.minThFAST: 7
+
+#--------------------------------------------------------------------------------------------
+# Viewer Parameters
+#--------------------------------------------------------------------------------------------
+Viewer.KeyFrameSize: 0.05
+Viewer.KeyFrameLineWidth: 1.0
+Viewer.GraphLineWidth: 0.9
+Viewer.PointSize: 2.0
+Viewer.CameraSize: 0.08
+Viewer.CameraLineWidth: 3.0
+Viewer.ViewpointX: 0.0
+Viewer.ViewpointY: -0.7
+Viewer.ViewpointZ: -3.5
+Viewer.ViewpointF: 500.0
